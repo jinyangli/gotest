@@ -5,5 +5,5 @@ protocol Simple {
            bytes buf;
 	}
 	GetRes Get(string key, int len);
-        void Put(string key, bytes buf);
+        void Put(string key, int len, bytes buf);
 }

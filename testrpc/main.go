@@ -10,6 +10,8 @@ import (
 	"log"
 	"net"
 	"os"
+	"sort"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -22,6 +24,8 @@ var (
 	isServer   = flag.Bool("s", false, "server mode")
 	serverAddr = flag.String("h", "127.0.0.1:8888", "server address")
 	bSize      = flag.Int("bSize", 512000, "Block Size")
+	nReq       = flag.Int("nReq", 100, "total requests")
+	nPara      = flag.Int("nPara", 10, "concurrency")
 )
 
 type ServerRPCHandlers struct {
@@ -34,6 +38,9 @@ func NewServerRPCHandlers() *ServerRPCHandlers {
 }
 
 func (h *ServerRPCHandlers) Put(ctx context.Context, args simple1.PutArg) error {
+	if args.Len != len(args.Buf) {
+		return errors.New("mismatch len\n")
+	}
 	atomic.AddUint64(&h.totalReceived, uint64(len(args.Buf)))
 	return nil
 }
@@ -132,11 +139,58 @@ func RunClient(srvAddr string, cacert []byte) {
 	client := simple1.SimpleClient{Cli: conn.GetClient()}
 
 	//generate workload
-	var arg simple1.PutArg
-	arg.Buf = make([]byte, *bSize)
-	arg.Key = "aaa"
-	err := client.Put(context.Background(), arg)
-	fmt.Printf("Put err=%v\n", err)
+	reqChan := make(chan bool, *nReq)
+	errChan := make(chan error, *nReq)
+	latChan := make(chan int, *nReq)
+
+	for i := 0; i < *nReq; i++ {
+		reqChan <- true
+	}
+	close(reqChan)
+
+	start := time.Now()
+	var wg sync.WaitGroup
+	for i := 0; i < *nPara; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for range reqChan {
+				t0 := time.Now()
+				var arg simple1.PutArg
+				arg.Buf = make([]byte, *bSize)
+				arg.Key = "aaa"
+				arg.Len = *bSize
+				err := client.Put(context.Background(), arg)
+				if err != nil {
+					errChan <- err
+				} else {
+					t1 := time.Now()
+					latChan <- int(t1.Sub(t0).Nanoseconds() / 1000000)
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	close(errChan)
+	close(latChan)
+
+	duration := time.Now().Sub(start).Nanoseconds() / 1000000
+	fmt.Printf("%d requests, %d msec\n", *nReq, duration)
+	for err := range errChan {
+		fmt.Printf("Put err=%v\n", err)
+	}
+	var alllat []int
+	for lat := range latChan {
+		alllat = append(alllat, lat)
+	}
+	sort.Ints(alllat)
+	reqRate := 1000 * float64(*nReq) / float64(duration)
+	fmt.Printf("Throughput(req/sec), Throughput(Mbps), 99-percentile lat, Max lat, Median lat\n")
+	fmt.Printf("%.2f, %.2f, %.2f, %.2f, %.2f\n", reqRate,
+		reqRate*float64(*bSize)*8/1000000,
+		float64(alllat[99*len(alllat)/100])/1000,
+		float64(alllat[len(alllat)-1])/1000,
+		float64(alllat[len(alllat)/2])/1000)
 }
 
 func main() {
