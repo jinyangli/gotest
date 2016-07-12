@@ -1,0 +1,9 @@
+@namespace("simple.1")
+protocol Simple {
+	record GetRes {
+	   string dummy;
+           bytes buf;
+	}
+	GetRes Get(string key, int len);
+        void Put(string key, bytes buf);
+}
