@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"os"
 	"sync/atomic"
 	"time"
@@ -61,7 +62,8 @@ func RunServer(bindAddr string, cacert []byte, key []byte) {
 		}
 		fmt.Printf("Accepted remote %s\n", c.RemoteAddr())
 		go func() {
-			xp := rpc.NewTransport(c, nil, nil)
+			logFact := rpc.NewSimpleLogFactory(nil, rpc.NewStandardLogOptions("", nil))
+			xp := rpc.NewTransport(c, logFact, nil)
 			rpcsrv := rpc.NewServer(xp, nil)
 			rpcsrv.Register(simple1.SimpleProtocol(NewServerRPCHandlers()))
 			<-rpcsrv.Run()
@@ -123,7 +125,10 @@ func RunClient(srvAddr string, cacert []byte) {
 		log.Fatal("Unable to load root certificates")
 	}
 	config := &tls.Config{RootCAs: certs}
-	conn := rpc.NewTLSConnectionWithTLSConfig(srvAddr, config, nil, NewClient(), true, nil, nil, nil, nil)
+	logFact := rpc.NewSimpleLogFactory(nil, rpc.NewStandardLogOptions("", nil))
+	var crap net.Addr
+	logOut := logFact.NewLog(crap).(rpc.SimpleLog).Out
+	conn := rpc.NewTLSConnectionWithTLSConfig(srvAddr, config, nil, NewClient(), true, logFact, nil, logOut, nil)
 	client := simple1.SimpleClient{Cli: conn.GetClient()}
 
 	//generate workload
