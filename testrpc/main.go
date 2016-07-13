@@ -138,6 +138,13 @@ func RunClient(srvAddr string, cacert []byte) {
 	conn := rpc.NewTLSConnectionWithTLSConfig(srvAddr, config, nil, NewClient(), true, logFact, nil, logOut, nil)
 	client := simple1.SimpleClient{Cli: conn.GetClient()}
 
+	//use an extra request to incur TLS overhead
+	var arg simple1.PutArg
+	arg.Buf = make([]byte, *bSize)
+	arg.Key = "aaa"
+	arg.Len = *bSize
+	client.Put(context.Background(), arg)
+
 	//generate workload
 	reqChan := make(chan bool, *nReq)
 	errChan := make(chan error, *nReq)
@@ -180,17 +187,20 @@ func RunClient(srvAddr string, cacert []byte) {
 		fmt.Printf("Put err=%v\n", err)
 	}
 	var alllat []int
+	var sum float64
 	for lat := range latChan {
 		alllat = append(alllat, lat)
+		sum += float64(lat) / 1000
 	}
 	sort.Ints(alllat)
-	reqRate := 1000 * float64(*nReq) / float64(duration)
-	fmt.Printf("Throughput(req/sec), Throughput(Mbps), 99-percentile lat, Max lat, Median lat\n")
+	reqRate := 1000 * float64(len(alllat)) / float64(duration)
+	fmt.Printf("total %d requests %v\n", len(alllat), alllat)
+	fmt.Printf("Req/sec, Mbps, 99p (sec), Max, Avg\n")
 	fmt.Printf("%.2f, %.2f, %.2f, %.2f, %.2f\n", reqRate,
 		reqRate*float64(*bSize)*8/1000000,
 		float64(alllat[99*len(alllat)/100])/1000,
 		float64(alllat[len(alllat)-1])/1000,
-		float64(alllat[len(alllat)/2])/1000)
+		sum/float64(len(alllat)))
 }
 
 func main() {
