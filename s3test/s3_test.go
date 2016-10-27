@@ -24,7 +24,7 @@ var (
 type S3TestOp func(store *S3Store, generator *rand.Rand) error
 
 var stores []*S3Store
-var allKeys []string
+var allKeys [][]string
 
 type sample struct {
 	end time.Time
@@ -136,27 +136,16 @@ func TestS3PutPerformance(t *testing.T) {
 }
 
 func TestS3GetPerformance(t *testing.T) {
-	var keys []string
-	var next string
-	var err error
-	for {
-		keys, next, err = stores[0].List("", next)
-		if err != nil {
-			t.Fatal(err)
-		} else if next == "" {
-			break
-		} else if len(keys) >= (*nOps * *nThreads) {
-			break
+	for i := 0; i < *nBuckets; i++ {
+		stores[i].ReadAllKeys(*nOps * (*nThreads))
+		if len(stores[i].keys) == 0 {
+			t.Fatal("No tuples in bucket %s\n", stores[i].bucketName)
 		}
-		allKeys = append(allKeys, keys...)
 	}
-
-	t.Log("Get listed %d keys\n", len(allKeys))
-
 	measureS3(t, func(store *S3Store, generator *rand.Rand) error {
 		// do a random get operation
-		i := generator.Intn(len(allKeys))
-		_, err := store.Get(allKeys[i])
+		i := generator.Intn(len(store.keys))
+		_, err := store.Get(store.keys[i])
 		return err
 	})
 }

@@ -22,6 +22,7 @@ var (
 type S3Store struct {
 	bucketName string
 	bucket     *s3.Bucket
+	keys       []string
 }
 
 func NewS3Store(regionStr string, bucket string) (*S3Store, error) {
@@ -102,6 +103,25 @@ func (h *S3Store) Put(key string, buf []byte) error {
 	err := h.bucket.Put(key, buf, "binary/octet-stream", s3.Private, o)
 	if err != nil {
 		return err
+	}
+	return nil
+}
+
+func (h *S3Store) ReadAllKeys(max int) error {
+	var keys []string
+	var next string
+	var err error
+	for {
+		keys, next, err = h.List("", next)
+		if err != nil {
+			return err
+		}
+		h.keys = append(h.keys, keys...)
+		if next == "" {
+			break
+		} else if len(h.keys) >= max {
+			break
+		}
 	}
 	return nil
 }
