@@ -12,11 +12,12 @@ import (
 )
 
 var (
-	nOps         = flag.Int("nOps", 100, "Number of test operations issued per client thread")
-	nBuckets     = flag.Int("nBuckets", 10, "Number of buckets used")
-	bucketPrefix = flag.String("bucketPrefix", "perf-test-", "Prefix of the testing buckets")
-	nThreads     = flag.Int("nThreads", 10, "Number of client threads to use")
-	bSize        = flag.Int("bSize", 500000, "Default block size")
+	nOps           = flag.Int("nOps", 100, "Number of test operations issued per client thread")
+	nBuckets       = flag.Int("nBuckets", 10, "Number of buckets used")
+	bucketPrefix   = flag.String("bucketPrefix", "perf-test-", "Prefix of the testing buckets")
+	nThreads       = flag.Int("nThreads", 10, "Number of client threads to use")
+	bSize          = flag.Int("bSize", 500000, "Default block size")
+	useOfficialSDK = flag.Bool("sdk", true, "Use Amazon's official SDK")
 	//createBuckets = flag.Bool("createBuckets", false, "Create buckets")
 
 	letterRunes = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
@@ -159,11 +160,15 @@ func TestMain(m *testing.M) {
 	//create all nBuckets
 	stores = make([]CloudBlobStore, *nBuckets)
 	for i := 0; i < *nBuckets; i++ {
-		s, err := NewGoamzS3Store("", (*bucketPrefix)+strconv.Itoa(i))
-			if err != nil {
-				log.Fatal(err)
-			}
-		stores[i] = s
+		var err error
+		if *useOfficialSDK {
+			stores[i], err = NewOfficialS3Store("", (*bucketPrefix)+strconv.Itoa(i))
+		} else {
+			stores[i], err = NewGoamzS3Store("", (*bucketPrefix)+strconv.Itoa(i))
+		}
+		if err != nil {
+			log.Fatal(err)
+		}
 	}
 	log.Printf("created %d buckets\n", *nBuckets)
 
