@@ -19,13 +19,19 @@ var (
 	ErrS3NotFound = errors.New("Not found")
 )
 
-type S3Store struct {
+type CloudBlobStore interface {
+	Get(string) ([]byte, error)
+	Put(string, []byte) error
+	ReadAllKeys(int) error 
+}
+
+type GoamzS3Store struct {
 	bucketName string
 	bucket     *s3.Bucket
 	keys       []string
 }
 
-func NewS3Store(regionStr string, bucket string) (*S3Store, error) {
+func NewGoamzS3Store(regionStr string, bucket string) (*GoamzS3Store, error) {
 
 	var region aws.Region
 	if len(regionStr) == 0 {
@@ -57,13 +63,13 @@ func NewS3Store(regionStr string, bucket string) (*S3Store, error) {
 	if err != nil {
 		log.Fatal(err)
 	}
-	return &S3Store{
+	return &GoamzS3Store{
 		bucketName: bucket,
 		bucket:     b,
 	}, nil
 }
 
-func (h *S3Store) Get(key string) (buf []byte, err error) {
+func (h *GoamzS3Store) Get(key string) (buf []byte, err error) {
 	var res *http.Response
 	res, err = h.bucket.GetResponse(key)
 
@@ -95,7 +101,7 @@ func (h *S3Store) Get(key string) (buf []byte, err error) {
 	return buf, err
 }
 
-func (h *S3Store) Put(key string, buf []byte) error {
+func (h *GoamzS3Store) Put(key string, buf []byte) error {
 	md5val := md5.Sum(buf)
 	o := s3.Options{
 		ContentMD5: base64.StdEncoding.EncodeToString(md5val[:]),
@@ -107,7 +113,7 @@ func (h *S3Store) Put(key string, buf []byte) error {
 	return nil
 }
 
-func (h *S3Store) ReadAllKeys(max int) error {
+func (h *GoamzS3Store) ReadAllKeys(max int) error {
 	var keys []string
 	var next string
 	var err error
@@ -126,7 +132,7 @@ func (h *S3Store) ReadAllKeys(max int) error {
 	return nil
 }
 
-func (h *S3Store) List(prefix string, marker string) (
+func (h *GoamzS3Store) List(prefix string, marker string) (
 	keys []string, nextMarker string, err error) {
 	var data *s3.ListResp
 	//2nd argument is delimeter. Set to empty because I don't want results grouped

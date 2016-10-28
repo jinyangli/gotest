@@ -14,16 +14,17 @@ import (
 var (
 	nOps         = flag.Int("nOps", 100, "Number of test operations issued per client thread")
 	nBuckets     = flag.Int("nBuckets", 10, "Number of buckets used")
-	bucketPrefix = flag.String("bucketPrefix", "PerfTestBuckets-", "Prefix of the testing buckets")
+	bucketPrefix = flag.String("bucketPrefix", "perf-test-", "Prefix of the testing buckets")
 	nThreads     = flag.Int("nThreads", 10, "Number of client threads to use")
 	bSize        = flag.Int("bSize", 500000, "Default block size")
+	//createBuckets = flag.Bool("createBuckets", false, "Create buckets")
 
 	letterRunes = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
 )
 
-type S3TestOp func(store *S3Store, generator *rand.Rand) error
+type S3TestOp func(store CloudBlobStore, generator *rand.Rand) error
 
-var stores []*S3Store
+var stores []CloudBlobStore
 var allKeys [][]string
 
 type sample struct {
@@ -74,7 +75,7 @@ func measureS3(t *testing.T, op S3TestOp) {
 	for i := 0; i < *nThreads; i++ {
 		wg.Add(1)
 		b := i % (*nBuckets)
-		go func(store *S3Store, whichTh int) {
+		go func(store CloudBlobStore, whichTh int) {
 			generator := rand.New(rand.NewSource(time.Now().UnixNano()))
 			for j := 0; j < *nOps; j++ {
 				start := time.Now()
@@ -127,7 +128,7 @@ func measureS3(t *testing.T, op S3TestOp) {
 }
 
 func TestS3PutPerformance(t *testing.T) {
-	measureS3(t, func(store *S3Store, generator *rand.Rand) error {
+	measureS3(t, func(store CloudBlobStore, generator *rand.Rand) error {
 		// do a random put operation
 		key := genRandString(40, generator)
 		val := genRandBytes(*bSize, generator)
@@ -142,7 +143,7 @@ func TestS3GetPerformance(t *testing.T) {
 			t.Fatal("No tuples in bucket %s\n", stores[i].bucketName)
 		}
 	}
-	measureS3(t, func(store *S3Store, generator *rand.Rand) error {
+	measureS3(t, func(store CloudBlobStore, generator *rand.Rand) error {
 		// do a random get operation
 		i := generator.Intn(len(store.keys))
 		_, err := store.Get(store.keys[i])
@@ -154,13 +155,14 @@ func TestMain(m *testing.M) {
 	flag.Parse()
 
 	sampleStats = make([]sample, *nThreads*(*nOps))
+
 	//create all nBuckets
-	stores = make([]*S3Store, *nBuckets)
+	stores = make([]CloudBlobStore, *nBuckets)
 	for i := 0; i < *nBuckets; i++ {
-		s, err := NewS3Store("", (*bucketPrefix)+strconv.Itoa(i))
-		if err != nil {
-			log.Fatal(err)
-		}
+		s, err := NewGoamzS3Store("", (*bucketPrefix)+strconv.Itoa(i))
+			if err != nil {
+				log.Fatal(err)
+			}
 		stores[i] = s
 	}
 	log.Printf("created %d buckets\n", *nBuckets)
