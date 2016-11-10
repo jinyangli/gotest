@@ -18,10 +18,19 @@ var (
 	nThreads       = flag.Int("nThreads", 10, "Number of client threads to use")
 	bSize          = flag.Int("bSize", 500000, "Default block size")
 	useOfficialSDK = flag.Bool("sdk", true, "Use Amazon's official SDK")
+	accelerate     = flag.Bool("acc", true, "Use Amazon's accelerate option")
 	//createBuckets = flag.Bool("createBuckets", false, "Create buckets")
 
 	letterRunes = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
 )
+
+type CloudBlobStore interface {
+	GetBucketName() string
+	GetRandomKey(*rand.Rand) string
+	Get(string) ([]byte, error)
+	Put(string, []byte) error
+	ReadAllKeys(int) (int, error)
+}
 
 type S3TestOp func(store CloudBlobStore, generator *rand.Rand) error
 
@@ -138,16 +147,19 @@ func TestS3PutPerformance(t *testing.T) {
 }
 
 func TestS3GetPerformance(t *testing.T) {
+	var nRead int
+	var err error
 	for i := 0; i < *nBuckets; i++ {
-		stores[i].ReadAllKeys(*nOps * (*nThreads))
-		if len(stores[i].keys) == 0 {
-			t.Fatal("No tuples in bucket %s\n", stores[i].bucketName)
+		nRead, err = stores[i].ReadAllKeys(*nOps * (*nThreads))
+		if err != nil || nRead == 0 {
+			t.Fatal("bucket(%s) err %v tuples in bucket %d\n",
+				stores[i].GetBucketName(), err, nRead)
 		}
 	}
 	measureS3(t, func(store CloudBlobStore, generator *rand.Rand) error {
 		// do a random get operation
-		i := generator.Intn(len(store.keys))
-		_, err := store.Get(store.keys[i])
+		key := store.GetRandomKey(generator)
+		_, err := store.Get(key)
 		return err
 	})
 }
@@ -162,9 +174,9 @@ func TestMain(m *testing.M) {
 	for i := 0; i < *nBuckets; i++ {
 		var err error
 		if *useOfficialSDK {
-			stores[i], err = NewOfficialS3Store("", (*bucketPrefix)+strconv.Itoa(i))
+			stores[i], err = NewOfficialS3Store("us-east-1", (*bucketPrefix)+strconv.Itoa(i), *accelerate)
 		} else {
-			stores[i], err = NewGoamzS3Store("", (*bucketPrefix)+strconv.Itoa(i))
+			stores[i], err = NewGoamzS3Store("us-east-1", (*bucketPrefix)+strconv.Itoa(i))
 		}
 		if err != nil {
 			log.Fatal(err)

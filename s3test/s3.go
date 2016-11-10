@@ -8,6 +8,7 @@ import (
 	"io"
 	"io/ioutil"
 	"log"
+	"math/rand"
 	"net/http"
 	"time"
 
@@ -18,12 +19,6 @@ import (
 var (
 	ErrS3NotFound = errors.New("Not found")
 )
-
-type CloudBlobStore interface {
-	Get(string) ([]byte, error)
-	Put(string, []byte) error
-	ReadAllKeys(int) error 
-}
 
 type GoamzS3Store struct {
 	bucketName string
@@ -67,6 +62,15 @@ func NewGoamzS3Store(regionStr string, bucket string) (*GoamzS3Store, error) {
 		bucketName: bucket,
 		bucket:     b,
 	}, nil
+}
+
+func (h *GoamzS3Store) GetBucketName() string {
+	return h.bucketName
+}
+
+func (h *GoamzS3Store) GetRandomKey(generator *rand.Rand) string {
+	i := generator.Intn(len(h.keys))
+	return h.keys[i]
 }
 
 func (h *GoamzS3Store) Get(key string) (buf []byte, err error) {
@@ -113,14 +117,13 @@ func (h *GoamzS3Store) Put(key string, buf []byte) error {
 	return nil
 }
 
-func (h *GoamzS3Store) ReadAllKeys(max int) error {
+func (h *GoamzS3Store) ReadAllKeys(max int) (nRead int, err error) {
 	var keys []string
 	var next string
-	var err error
 	for {
 		keys, next, err = h.List("", next)
 		if err != nil {
-			return err
+			return len(h.keys), err
 		}
 		h.keys = append(h.keys, keys...)
 		if next == "" {
@@ -129,7 +132,7 @@ func (h *GoamzS3Store) ReadAllKeys(max int) error {
 			break
 		}
 	}
-	return nil
+	return len(h.keys), nil
 }
 
 func (h *GoamzS3Store) List(prefix string, marker string) (
