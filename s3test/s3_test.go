@@ -2,9 +2,11 @@ package s3test
 
 import (
 	"flag"
+	"fmt"
 	"log"
 	"math/rand"
 	"os"
+	"runtime/pprof"
 	"strconv"
 	"sync"
 	"testing"
@@ -19,6 +21,7 @@ var (
 	bSize          = flag.Int("bSize", 500000, "Default block size")
 	useOfficialSDK = flag.Bool("sdk", true, "Use Amazon's official SDK")
 	accelerate     = flag.Bool("acc", true, "Use Amazon's accelerate option")
+	cpuprofile     = flag.String("cpuprofile", "", "write cpu profile to file")
 	//createBuckets = flag.Bool("createBuckets", false, "Create buckets")
 
 	letterRunes = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
@@ -44,12 +47,26 @@ type sample struct {
 
 var sampleStats []sample
 
-func genRandBytes(n int, generator *rand.Rand) []byte {
-	buf := make([]byte, n)
-	for i := range buf {
-		buf[i] = byte(generator.Intn(255))
+var randBlock []byte
+
+func init() {
+	small := make([]byte, 16)
+	generator := rand.New(rand.NewSource(time.Now().UnixNano()))
+	r, err := generator.Read(small)
+	if r != 16 || err != nil {
+		log.Fatalf("returned %d random bytes, expected %d err=%v\n", r, 16, err)
 	}
-	return buf
+	n := *bSize
+	buf := make([]byte, n)
+	for i := 0; i < n; i++ {
+		buf[i] = small[i%16]
+	}
+
+	randBlock = buf
+}
+
+func genRandBytes(n int, generator *rand.Rand) []byte {
+	return randBlock
 }
 
 func genRandString(n int, generator *rand.Rand) string {
@@ -184,5 +201,18 @@ func TestMain(m *testing.M) {
 	}
 	log.Printf("created %d buckets\n", *nBuckets)
 
-	os.Exit(m.Run())
+	if *cpuprofile != "" {
+		f, err := os.Create(*cpuprofile)
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer f.Close()
+		fmt.Printf("starting profiling\n")
+		pprof.StartCPUProfile(f)
+		defer func() {
+			fmt.Printf("stopping profiling\n")
+			pprof.StopCPUProfile()
+		}()
+	}
+	m.Run()
 }

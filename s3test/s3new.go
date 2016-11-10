@@ -38,6 +38,8 @@ func (h *OfficialS3Store) GetRandomKey(generator *rand.Rand) string {
 }
 
 func (h *OfficialS3Store) Put(key string, buf []byte) error {
+	//no need for adding content-md5 header because SDK signs
+	//all payload already
 	params := &s3.PutObjectInput{
 		Bucket: aws.String(h.bucketName),
 		Key:    aws.String(key),
