@@ -56,8 +56,12 @@ func NewGoamzS3Store(regionStr string, bucket string) (*GoamzS3Store, error) {
 	b := s3.New(auth, region, httpClient).Bucket(bucket)
 	err = b.PutBucket(s3.BucketOwnerFull)
 	if err != nil {
+		fmt.Printf("trying to create bucket %s\n", bucket)
 		log.Fatal(err)
+	} else {
+		fmt.Printf("successfully created bucket %s\n", bucket)
 	}
+
 	return &GoamzS3Store{
 		bucketName: bucket,
 		bucket:     b,
@@ -76,6 +80,12 @@ func (h *GoamzS3Store) GetRandomKey(generator *rand.Rand) string {
 func (h *GoamzS3Store) Get(key string) (buf []byte, err error) {
 	var res *http.Response
 	res, err = h.bucket.GetResponse(key)
+	defer func() {
+		if res != nil {
+			io.Copy(ioutil.Discard, res.Body)
+			res.Body.Close()
+		}
+	}()
 
 	if err != nil {
 		if s3err, ok := err.(*s3.Error); ok && s3err.StatusCode == http.StatusNotFound {
@@ -83,13 +93,6 @@ func (h *GoamzS3Store) Get(key string) (buf []byte, err error) {
 		}
 		return buf, err
 	}
-
-	defer func() {
-		if res != nil {
-			io.Copy(ioutil.Discard, res.Body)
-			res.Body.Close()
-		}
-	}()
 
 	if res.StatusCode != http.StatusOK {
 		return buf, fmt.Errorf("S3 Get err")

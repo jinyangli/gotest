@@ -191,9 +191,9 @@ func TestMain(m *testing.M) {
 	for i := 0; i < *nBuckets; i++ {
 		var err error
 		if *useOfficialSDK {
-			stores[i], err = NewOfficialS3Store("us-east-1", (*bucketPrefix)+strconv.Itoa(i), *accelerate)
+			stores[i], err = NewOfficialS3Store("", (*bucketPrefix)+strconv.Itoa(i), *accelerate)
 		} else {
-			stores[i], err = NewGoamzS3Store("us-east-1", (*bucketPrefix)+strconv.Itoa(i))
+			stores[i], err = NewGoamzS3Store("", (*bucketPrefix)+strconv.Itoa(i))
 		}
 		if err != nil {
 			log.Fatal(err)
