@@ -16,11 +16,11 @@ import (
 var (
 	nOps           = flag.Int("nOps", 100, "Number of test operations issued per client thread")
 	nBuckets       = flag.Int("nBuckets", 10, "Number of buckets used")
-	bucketPrefix   = flag.String("bucketPrefix", "perf-test-", "Prefix of the testing buckets")
+	bucketPrefix   = flag.String("bucketPrefix", "pperf-test-", "Prefix of the testing buckets")
 	nThreads       = flag.Int("nThreads", 10, "Number of client threads to use")
 	bSize          = flag.Int("bSize", 500000, "Default block size")
 	useOfficialSDK = flag.Bool("sdk", true, "Use Amazon's official SDK")
-	accelerate     = flag.Bool("acc", true, "Use Amazon's accelerate option")
+	accelerate     = flag.Bool("acc", false, "Use Amazon's accelerate option")
 	cpuprofile     = flag.String("cpuprofile", "", "write cpu profile to file")
 	//createBuckets = flag.Bool("createBuckets", false, "Create buckets")
 
@@ -191,9 +191,9 @@ func TestMain(m *testing.M) {
 	for i := 0; i < *nBuckets; i++ {
 		var err error
 		if *useOfficialSDK {
-			stores[i], err = NewOfficialS3Store("", (*bucketPrefix)+strconv.Itoa(i), *accelerate)
+			stores[i], err = NewOfficialS3Store("us-east-1", (*bucketPrefix)+strconv.Itoa(i), *accelerate)
 		} else {
-			stores[i], err = NewGoamzS3Store("", (*bucketPrefix)+strconv.Itoa(i))
+			stores[i], err = NewGoamzS3Store("us-east-1", (*bucketPrefix)+strconv.Itoa(i))
 		}
 		if err != nil {
 			log.Fatal(err)
