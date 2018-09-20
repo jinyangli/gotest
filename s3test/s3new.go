@@ -17,8 +17,8 @@ type OfficialS3Store struct {
 	keys       []string
 }
 
-func NewOfficialS3Store(regionStr string, bucket string, goFast bool) (*OfficialS3Store, error) {
-	config := aws.NewConfig().WithRegion(regionStr).WithS3UseAccelerate(goFast)
+func NewOfficialS3Store(regionStr string, bucket string, accelerate bool) (*OfficialS3Store, error) {
+	config := aws.NewConfig().WithRegion(regionStr).WithS3UseAccelerate(accelerate)
 	sess, err := session.NewSession(config)
 	if err != nil {
 		return nil, err

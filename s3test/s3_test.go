@@ -7,16 +7,17 @@ import (
 	"math/rand"
 	"os"
 	"runtime/pprof"
-	"strconv"
+	//"strconv"
 	"sync"
 	"testing"
 	"time"
 )
 
 var (
-	nOps           = flag.Int("nOps", 100, "Number of test operations issued per client thread")
-	nBuckets       = flag.Int("nBuckets", 10, "Number of buckets used")
-	bucketPrefix   = flag.String("bucketPrefix", "pperf-test-", "Prefix of the testing buckets")
+	nOps     = flag.Int("nOps", 100, "Number of test operations issued per client thread")
+	nBuckets = flag.Int("nBuckets", 1, "Number of buckets used")
+	//	bucketPrefix   = flag.String("bucketPrefix", "pperf-test-", "Prefix of the testing buckets")
+	bucketPrefix   = flag.String("bucketPrefix", "bservertest", "Prefix of the testing buckets")
 	nThreads       = flag.Int("nThreads", 10, "Number of client threads to use")
 	bSize          = flag.Int("bSize", 500000, "Default block size")
 	useOfficialSDK = flag.Bool("sdk", true, "Use Amazon's official SDK")
@@ -188,17 +189,31 @@ func TestMain(m *testing.M) {
 
 	//create all nBuckets
 	stores = make([]CloudBlobStore, *nBuckets)
-	for i := 0; i < *nBuckets; i++ {
-		var err error
-		if *useOfficialSDK {
-			stores[i], err = NewOfficialS3Store("us-east-1", (*bucketPrefix)+strconv.Itoa(i), *accelerate)
-		} else {
-			stores[i], err = NewGoamzS3Store("us-east-1", (*bucketPrefix)+strconv.Itoa(i))
+	/*
+		for i := 0; i < *nBuckets; i++ {
+			name := *bucketPrefix
+			if i != 0 {
+				name += strconv.Itoa(i)
+			}
+			var err error
+			if *useOfficialSDK {
+				stores[i], err = NewOfficialS3Store("us-east-1", name, *accelerate)
+			} else {
+				stores[i], err = NewGoamzS3Store("us-east-1", name)
+			}
+			if err != nil {
+				log.Fatal(err)
+			}
 		}
-		if err != nil {
-			log.Fatal(err)
-		}
+	*/
+	if *nBuckets != 1 {
+		log.Fatal(fmt.Errorf("nBuckets must be 1"))
 	}
+	store, err := NewOfficialS3Store("us-east-1", *bucketPrefix, *accelerate)
+	if err != nil {
+		log.Fatal(err)
+	}
+	stores[0] = store
 	log.Printf("created %d buckets\n", *nBuckets)
 
 	if *cpuprofile != "" {
