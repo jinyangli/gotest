@@ -73,7 +73,7 @@ func (d *Daemon) Handle(c net.Conn) {
 		d.wg.Done()
 	}()
 
-	xp := rpc.NewTransport(c, d.logFactory, nil)
+	xp := rpc.NewTransport(c, d.logFactory, nil, rpc.DefaultMaxFrameLength)
 	srv := rpc.NewServer(xp, nil)
 	d.rpcsFactory.CreateServerAndRegister(srv)
 
