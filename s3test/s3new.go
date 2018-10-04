@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"io"
 	"io/ioutil"
-	"math/rand"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
@@ -14,7 +13,6 @@ import (
 type OfficialS3Store struct {
 	svc        *s3.S3
 	bucketName string
-	keys       []string
 }
 
 func NewOfficialS3Store(regionStr string, bucket string, accelerate bool) (*OfficialS3Store, error) {
@@ -24,17 +22,12 @@ func NewOfficialS3Store(regionStr string, bucket string, accelerate bool) (*Offi
 		return nil, err
 	}
 	svc := s3.New(sess)
-	store := &OfficialS3Store{svc, bucket, nil}
+	store := &OfficialS3Store{svc, bucket}
 	return store, nil
 }
 
 func (h *OfficialS3Store) GetBucketName() string {
 	return h.bucketName
-}
-
-func (h *OfficialS3Store) GetRandomKey(generator *rand.Rand) string {
-	i := generator.Intn(len(h.keys))
-	return h.keys[i]
 }
 
 func (h *OfficialS3Store) Put(key string, buf []byte) error {
@@ -76,16 +69,16 @@ func (h *OfficialS3Store) Get(key string) (buf []byte, err error) {
 	return buf, err
 }
 
-func (h *OfficialS3Store) ReadAllKeys(max int) (nRead int, err error) {
+func (h *OfficialS3Store) ReadAllKeys(max int) (allkeys []string, err error) {
 	err = h.svc.ListObjectsPages(&s3.ListObjectsInput{Bucket: &h.bucketName},
 		func(p *s3.ListObjectsOutput, last bool) (shouldContinue bool) {
 			for _, obj := range p.Contents {
-				h.keys = append(h.keys, *obj.Key)
+				allkeys = append(allkeys, *obj.Key)
 			}
-			if len(h.keys) < max {
+			if len(allkeys) < max {
 				return true
 			}
 			return false
 		})
-	return len(h.keys), err
+	return allkeys, err
 }

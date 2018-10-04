@@ -3,6 +3,7 @@ package s3test
 import (
 	"flag"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"math/rand"
 	"os"
@@ -11,6 +12,9 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	rpc "github.com/keybase/go-framed-msgpack-rpc/rpc"
+	context "golang.org/x/net/context"
 )
 
 var (
@@ -23,6 +27,7 @@ var (
 	useOfficialSDK = flag.Bool("sdk", true, "Use Amazon's official SDK")
 	accelerate     = flag.Bool("acc", false, "Use Amazon's accelerate option")
 	cpuprofile     = flag.String("cpuprofile", "", "write cpu profile to file")
+	srvAddr        = flag.String("srvAddr", "", "server address")
 	//createBuckets = flag.Bool("createBuckets", false, "Create buckets")
 
 	letterRunes = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
@@ -30,10 +35,13 @@ var (
 
 type CloudBlobStore interface {
 	GetBucketName() string
-	GetRandomKey(*rand.Rand) string
 	Get(string) ([]byte, error)
 	Put(string, []byte) error
-	ReadAllKeys(int) (int, error)
+	ReadAllKeys(int) ([]string, error)
+}
+
+type LoadGenerator interface {
+	DoWork(generator *rand.Rand) error
 }
 
 type S3TestOp func(store CloudBlobStore, generator *rand.Rand) error
@@ -96,18 +104,17 @@ func calculateStats(dur time.Duration, latencies []int) (throughput float32, min
 	return
 }
 
-func measureS3(t *testing.T, op S3TestOp) {
+func measureS3(t *testing.T, loadGen LoadGenerator) {
 	var wg sync.WaitGroup
 
 	startTime := time.Now()
 	for i := 0; i < *nThreads; i++ {
 		wg.Add(1)
-		b := i % (*nBuckets)
-		go func(store CloudBlobStore, whichTh int) {
+		go func(loadGen LoadGenerator, whichTh int) {
 			generator := rand.New(rand.NewSource(time.Now().UnixNano()))
 			for j := 0; j < *nOps; j++ {
 				start := time.Now()
-				err := op(store, generator)
+				err := loadGen.DoWork(generator)
 				if err != nil {
 					t.Logf("thread %d request %d err %v\n", whichTh, j, err)
 				}
@@ -117,7 +124,7 @@ func measureS3(t *testing.T, op S3TestOp) {
 				sampleStats[whichTh*(*nOps)+j].lat = int(lat)
 			}
 			wg.Done()
-		}(stores[b], i)
+		}(loadGen, i)
 	}
 	wg.Wait()
 
@@ -155,31 +162,115 @@ func measureS3(t *testing.T, op S3TestOp) {
 
 }
 
+type PutGenerator struct {
+	store CloudBlobStore
+}
+
+func (p *PutGenerator) DoWork(generator *rand.Rand) error {
+	// do a random put operation
+	key := genRandString(40, generator)
+	val := genRandBytes(*bSize, generator)
+	return p.store.Put(key, val)
+}
+
 func TestS3PutPerformance(t *testing.T) {
-	measureS3(t, func(store CloudBlobStore, generator *rand.Rand) error {
-		// do a random put operation
-		key := genRandString(40, generator)
-		val := genRandBytes(*bSize, generator)
-		return store.Put(key, val)
-	})
+	p := &PutGenerator{
+		store: stores[0],
+	}
+	measureS3(t, p)
+}
+
+type GetGenerator struct {
+	keys  []string
+	store CloudBlobStore
+}
+
+func (p *GetGenerator) DoWork(generator *rand.Rand) error {
+	// do a random put operation
+	key := p.keys[rand.Intn(len(p.keys))]
+	_, err := p.store.Get(key)
+	return err
 }
 
 func TestS3GetPerformance(t *testing.T) {
-	var nRead int
-	var err error
-	for i := 0; i < *nBuckets; i++ {
-		nRead, err = stores[i].ReadAllKeys(*nOps * (*nThreads))
-		if err != nil || nRead == 0 {
-			t.Fatal("bucket(%s) err %v tuples in bucket %d\n",
-				stores[i].GetBucketName(), err, nRead)
-		}
+	keys, err := stores[0].ReadAllKeys(*nOps * (*nThreads))
+	if err != nil || len(keys) == 0 {
+		t.Fatal("bucket(%s) err %v tuples in bucket %d\n",
+			stores[0].GetBucketName(), err, len(keys))
 	}
-	measureS3(t, func(store CloudBlobStore, generator *rand.Rand) error {
-		// do a random get operation
-		key := store.GetRandomKey(generator)
-		_, err := store.Get(key)
-		return err
-	})
+	loadGen := GetGenerator{
+		keys:  keys,
+		store: stores[0],
+	}
+	measureS3(t, &loadGen)
+}
+
+type RPCConnectHandler struct {
+}
+
+func (c *RPCConnectHandler) OnConnect(ctx context.Context,
+	conn *rpc.Connection, client rpc.GenericClient, _ *rpc.Server) error {
+	fmt.Printf("OnConnect\n")
+	return nil
+}
+
+func (c *RPCConnectHandler) OnDoCommandError(err error, nextTime time.Duration) {
+	fmt.Printf("OnDoCommandError\n")
+}
+
+func (c *RPCConnectHandler) OnDisconnected(ctx context.Context, status rpc.DisconnectStatus) {
+	fmt.Printf("OnDisconnected\n")
+}
+
+func (c *RPCConnectHandler) OnConnectError(err error, dur time.Duration) {
+	fmt.Printf("OnConnectError\n")
+}
+
+func (c *RPCConnectHandler) ShouldRetry(name string, err error) bool {
+	fmt.Printf("ShouldRetry\n")
+	return true
+}
+
+func (c *RPCConnectHandler) ShouldRetryOnConnect(err error) bool {
+	fmt.Printf("ShouldRetryOnConnect\n")
+	return true
+}
+
+func (c *RPCConnectHandler) HandlerName() string {
+	return "RPCConnectHandler"
+}
+
+type ServerGetGenerator struct {
+	client BlockProtocolClient
+}
+
+func (g *ServerGetGenerator) DoWork(generator *rand.Rand) error {
+	arg := GetArg{
+		Key:  "hello",
+		Size: *bSize,
+	}
+	_, err := g.client.Get(context.Background(), arg)
+	return err
+}
+
+func TestServerGetPerformance(t *testing.T) {
+	cert, err := ioutil.ReadFile("server/selfsigned.crt")
+	if err != nil {
+		log.Fatal(err)
+	}
+	//srvAddr must be s3test.news.cs.nyu.edu specify that in /etc/hosts
+	opts := rpc.ConnectionOpts{
+		DontConnectNow: true,
+	}
+	handler := &RPCConnectHandler{}
+	logOpts := rpc.NewStandardLogOptions("", nil)
+	conn := rpc.NewTLSConnection(*srvAddr, cert, nil, handler, rpc.NewSimpleLogFactory(nil, logOpts), rpc.SimpleLogOutput{}, opts)
+	client := BlockProtocolClient{Cli: conn.GetClient()}
+
+	g := &ServerGetGenerator{
+		client: client,
+	}
+	measureS3(t, g)
 }
 
 func TestMain(m *testing.M) {
