@@ -46,10 +46,12 @@ func (f *MyServer) Get(ctx context.Context, arg s3test.GetArg) (res s3test.GetRe
 }
 
 func (f *MyServer) Put(ctx context.Context, arg s3test.PutArg) (res s3test.PutRes, err error) {
-	fmt.Printf("Put Key size %d Value size %d\n", len(arg.Key), len(arg.Value))
+	startTime := time.Now()
 	if !arg.NoS3 {
 		f.s3store.Put(arg.Key, arg.Value)
 	}
+	endTime := time.Now()
+	fmt.Printf("Put %.2f Key size %d Value size %d\n", len(arg.Key), len(arg.Value), endTime.Sub(startTime).Nanoseconds()/int64(time.Millisecond))
 	res.Size = len(arg.Value)
 	return res, nil
 }
