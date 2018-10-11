@@ -25,7 +25,7 @@ var (
 	nThreads       = flag.Int("nThreads", 10, "Number of client threads to use")
 	bSize          = flag.Int("bSize", 500000, "Default block size")
 	useOfficialSDK = flag.Bool("sdk", true, "Use Amazon's official SDK")
-	accelerate     = flag.Bool("acc", false, "Use Amazon's accelerate option")
+	accelerate     = flag.Bool("acc", true, "Use Amazon's accelerate option")
 	cpuprofile     = flag.String("cpuprofile", "", "write cpu profile to file")
 	srvAddr        = flag.String("srvAddr", "", "server address")
 	//createBuckets = flag.Bool("createBuckets", false, "Create buckets")
