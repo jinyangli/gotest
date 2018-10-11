@@ -33,6 +33,15 @@ var (
 	letterRunes = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
 )
 
+type nullLogOutput struct{}
+
+func (nullLogOutput) Info(fmt string, args ...interface{})                  {}
+func (nullLogOutput) Error(fmt string, args ...interface{})                 {}
+func (nullLogOutput) Debug(fmt string, args ...interface{})                 {}
+func (nullLogOutput) Warning(fmt string, args ...interface{})               {}
+func (nullLogOutput) Profile(fmt string, args ...interface{})               {}
+func (n nullLogOutput) CloneWithAddedDepth(int) rpc.LogOutputWithDepthAdder { return n }
+
 type CloudBlobStore interface {
 	GetBucketName() string
 	Get(string) ([]byte, error)
@@ -253,6 +262,19 @@ func (g *ServerGetGenerator) DoWork(generator *rand.Rand) error {
 	return err
 }
 
+type ServerPutGenerator struct {
+	client BlockProtocolClient
+}
+
+func (g *ServerPutGenerator) DoWork(generator *rand.Rand) error {
+	arg := PutArg{
+		Key:   genRandString(40, generator),
+		Value: genRandBytes(*bSize, generator),
+	}
+	_, err := g.client.Put(context.Background(), arg)
+	return err
+}
+
 func TestServerGetPerformance(t *testing.T) {
 	cert, err := ioutil.ReadFile("server/selfsigned.crt")
 	if err != nil {
@@ -264,7 +286,8 @@ func TestServerGetPerformance(t *testing.T) {
 	}
 	handler := &RPCConnectHandler{}
 	logOpts := rpc.NewStandardLogOptions("", nil)
-	conn := rpc.NewTLSConnection(*srvAddr, cert, nil, handler, rpc.NewSimpleLogFactory(nil, logOpts), rpc.SimpleLogOutput{}, opts)
+	conn := rpc.NewTLSConnection(rpc.NewFixedRemote(*srvAddr), cert, nil,
+		handler, rpc.NewSimpleLogFactory(nil, logOpts), nullLogOutput{}, rpc.DefaultMaxFrameLength, opts)
 	client := BlockProtocolClient{Cli: conn.GetClient()}
 
 	g := &ServerGetGenerator{
