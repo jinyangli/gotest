@@ -48,10 +48,13 @@ func (f *MyServer) Get(ctx context.Context, arg s3test.GetArg) (res s3test.GetRe
 func (f *MyServer) Put(ctx context.Context, arg s3test.PutArg) (res s3test.PutRes, err error) {
 	startTime := time.Now()
 	if !arg.NoS3 {
-		f.s3store.Put(arg.Key, arg.Value)
+		err := f.s3store.Put(arg.Key, arg.Value)
+		if err != nil {
+			log.Fatal(err)
+		}
 	}
 	endTime := time.Now()
-	fmt.Printf("Put %d Key size %d Value size %d\n", len(arg.Key), len(arg.Value), endTime.Sub(startTime).Nanoseconds()/int64(time.Millisecond))
+	fmt.Printf("Put %d NoS3 %v Key size %d Value size %d\n", endTime.Sub(startTime).Nanoseconds()/int64(time.Millisecond), arg.NoS3, len(arg.Key), len(arg.Value))
 	res.Size = len(arg.Value)
 	return res, nil
 }
