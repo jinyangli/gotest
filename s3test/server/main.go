@@ -58,7 +58,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	d, err := s3test.NewDaemon(srv, nil, cert, key)
+	d, err := s3test.NewDaemon(srv, cert, key)
 	if err != nil {
 		log.Fatal(err)
 	}

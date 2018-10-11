@@ -38,7 +38,7 @@ type Daemon struct {
 }
 
 // NewDaemon constructs a new, named Daemon instance.
-func NewDaemon(f RPCSFactory, logFactory rpc.LogFactory, cacert []byte, key []byte) (
+func NewDaemon(f RPCSFactory, cacert []byte, key []byte) (
 	*Daemon, error) {
 	cert, err := tls.X509KeyPair(cacert, key)
 	if err != nil {
@@ -49,9 +49,10 @@ func NewDaemon(f RPCSFactory, logFactory rpc.LogFactory, cacert []byte, key []by
 	if err != nil {
 		return nil, err
 	}
+	logOpts := rpc.NewStandardLogOptions("", nil)
 	d := &Daemon{
 		rpcsFactory: f,
-		logFactory:  logFactory,
+		logFactory:  rpc.NewSimpleLogFactory(nil, logOpts),
 		listener:    listener,
 		conns:       make(map[net.Conn]struct{}),
 		shutdownCh:  make(chan struct{}),
