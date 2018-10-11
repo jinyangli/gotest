@@ -1,7 +1,7 @@
 package main
 
 import (
-	//"fmt"
+	"fmt"
 	"io/ioutil"
 	"log"
 	"math/rand"
@@ -46,7 +46,7 @@ func (f *MyServer) Get(ctx context.Context, arg s3test.GetArg) (res s3test.GetRe
 }
 
 func (f *MyServer) Put(ctx context.Context, arg s3test.PutArg) (res s3test.PutRes, err error) {
-	fmt.Printf("Put Key size %d Value size %d\n", len(arg.Key), len(arg.Value)
+	fmt.Printf("Put Key size %d Value size %d\n", len(arg.Key), len(arg.Value))
 	f.s3store.Put(arg.Key, arg.Value)
 	res.Size = len(arg.Value)
 	return res, nil
