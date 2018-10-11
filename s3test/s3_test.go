@@ -275,7 +275,7 @@ func (g *ServerPutGenerator) DoWork(generator *rand.Rand) error {
 	return err
 }
 
-func TestServerGetPerformance(t *testing.T) {
+func makeClient() BlockProtocolClient {
 	cert, err := ioutil.ReadFile("server/selfsigned.crt")
 	if err != nil {
 		log.Fatal(err)
@@ -289,8 +289,42 @@ func TestServerGetPerformance(t *testing.T) {
 	conn := rpc.NewTLSConnection(rpc.NewFixedRemote(*srvAddr), cert, nil,
 		handler, rpc.NewSimpleLogFactory(nil, logOpts), nullLogOutput{}, rpc.DefaultMaxFrameLength, opts)
 	client := BlockProtocolClient{Cli: conn.GetClient()}
+	return client
+}
 
+func TestServerGetPerformance(t *testing.T) {
+	client := makeClient()
 	g := &ServerGetGenerator{
+		client: client,
+	}
+	measureS3(t, g)
+}
+
+func TestServerPutPerformance(t *testing.T) {
+	client := makeClient()
+	g := &ServerPutGenerator{
+		client: client,
+	}
+	measureS3(t, g)
+}
+
+type ServerNullPutGenerator struct {
+	client BlockProtocolClient
+}
+
+func (g *ServerNullPutGenerator) DoWork(generator *rand.Rand) error {
+	arg := PutArg{
+		Key:   genRandString(40, generator),
+		Value: genRandBytes(*bSize, generator),
+		NoS3:  true,
+	}
+	_, err := g.client.Put(context.Background(), arg)
+	return err
+}
+
+func TestServerNullPutPerformance(t *testing.T) {
+	client := makeClient()
+	g := &ServerNullPutGenerator{
 		client: client,
 	}
 	measureS3(t, g)

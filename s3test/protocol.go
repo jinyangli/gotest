@@ -19,6 +19,7 @@ type GetRes struct {
 type PutArg struct {
 	Key   string
 	Value []byte
+	NoS3  bool
 }
 
 type PutRes struct {
