@@ -51,7 +51,7 @@ func (f *MyServer) Put(ctx context.Context, arg s3test.PutArg) (res s3test.PutRe
 		f.s3store.Put(arg.Key, arg.Value)
 	}
 	endTime := time.Now()
-	fmt.Printf("Put %.2f Key size %d Value size %d\n", len(arg.Key), len(arg.Value), endTime.Sub(startTime).Nanoseconds()/int64(time.Millisecond))
+	fmt.Printf("Put %d Key size %d Value size %d\n", len(arg.Key), len(arg.Value), endTime.Sub(startTime).Nanoseconds()/int64(time.Millisecond))
 	res.Size = len(arg.Value)
 	return res, nil
 }
