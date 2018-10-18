@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -10,6 +11,10 @@ import (
 	"github.com/jinyangli/gotest/s3test"
 	"github.com/keybase/go-framed-msgpack-rpc/rpc"
 	context "golang.org/x/net/context"
+)
+
+var (
+	verbose = flag.Bool("v", false, "verbose printing")
 )
 
 type MyServer struct {
@@ -54,12 +59,16 @@ func (f *MyServer) Put(ctx context.Context, arg s3test.PutArg) (res s3test.PutRe
 		}
 	}
 	endTime := time.Now()
-	fmt.Printf("Put %d NoS3 %v Key size %d Value size %d\n", endTime.Sub(startTime).Nanoseconds()/int64(time.Millisecond), arg.NoS3, len(arg.Key), len(arg.Value))
+	if *verbose {
+		fmt.Printf("Put %d NoS3 %v Key size %d Value size %d\n", endTime.Sub(startTime).Nanoseconds()/int64(time.Millisecond), arg.NoS3, len(arg.Key), len(arg.Value))
+	}
 	res.Size = len(arg.Value)
 	return res, nil
 }
 
 func main() {
+	flag.Parse()
+
 	cert, err := ioutil.ReadFile("selfsigned.crt")
 	if err != nil {
 		log.Fatal(err)

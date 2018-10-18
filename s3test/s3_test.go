@@ -9,6 +9,7 @@ import (
 	"os"
 	"runtime/pprof"
 	//"strconv"
+	"sort"
 	"sync"
 	"testing"
 	"time"
@@ -58,13 +59,25 @@ type S3TestOp func(store CloudBlobStore, generator *rand.Rand) error
 var stores []CloudBlobStore
 var allKeys [][]string
 
-type sample struct {
-	end time.Time
-	lat int
+type Sample struct {
+	Start time.Time
+	End   time.Time
+	Lat   int64
 }
 
-var sampleStats []sample
+type ByStart []Sample
 
+func (s ByStart) Len() int           { return len(s) }
+func (s ByStart) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
+func (s ByStart) Less(i, j int) bool { return s[i].Start.Before(s[j].Start) }
+
+type ByLat []Sample
+
+func (s ByLat) Len() int           { return len(s) }
+func (s ByLat) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
+func (s ByLat) Less(i, j int) bool { return s[i].Lat < s[j].Lat }
+
+var allSamples []Sample
 var randBlock []byte
 
 func init() {
@@ -95,80 +108,66 @@ func genRandString(n int, generator *rand.Rand) string {
 	return string(buf)
 }
 
-func calculateStats(dur time.Duration, latencies []int) (throughput float32, min int, max int, avg float32) {
-	milli := dur.Nanoseconds() / 1000000
-	throughput = float32(len(latencies)) * 1000.0 / float32(milli)
-	var total int
-	min, max = latencies[0], latencies[0]
-	for _, v := range latencies {
-		if v > max {
-			max = v
+func calculateThroughput() (throughput float32, samples []Sample, startTime time.Time) {
+	startTime = time.Now()
+	for i := 0; i < *nThreads; i++ {
+		ind := i*(*nOps) + 0
+		if allSamples[ind].Start.Before(startTime) {
+			startTime = allSamples[ind].Start
 		}
-		if v < min {
-			min = v
-		}
-		total += v
 	}
-	avg = float32(total) / float32(len(latencies))
-	return
+	endTime := time.Now()
+	for i := 0; i < *nThreads; i++ {
+		ind := i*(*nOps) + (*nOps - 1)
+		if allSamples[ind].End.Before(endTime) {
+			endTime = allSamples[ind].End
+		}
+	}
+	for i := 0; i < *nThreads; i++ {
+		for j := 0; j < *nOps; j++ {
+			ind := i*(*nOps) + j
+			if allSamples[ind].End.Before(endTime) {
+				samples = append(samples, allSamples[ind])
+			} else {
+				break
+			}
+		}
+	}
+	throughput = float32(len(samples)) / float32(endTime.Sub(startTime).Seconds())
+	return throughput, samples, startTime
 }
 
 func measureS3(t *testing.T, loadGen LoadGenerator) {
 	var wg sync.WaitGroup
 
-	startTime := time.Now()
 	for i := 0; i < *nThreads; i++ {
 		wg.Add(1)
 		go func(loadGen LoadGenerator, whichTh int) {
 			generator := rand.New(rand.NewSource(time.Now().UnixNano()))
 			for j := 0; j < *nOps; j++ {
-				start := time.Now()
+				ind := whichTh*(*nOps) + j
+				allSamples[ind].Start = time.Now()
 				err := loadGen.DoWork(generator)
 				if err != nil {
 					t.Logf("thread %d request %d err %v\n", whichTh, j, err)
 				}
-				end := time.Now()
-				sampleStats[whichTh*(*nOps)+j].end = end
-				lat := end.Sub(start).Nanoseconds() / int64(time.Millisecond)
-				sampleStats[whichTh*(*nOps)+j].lat = int(lat)
+				allSamples[ind].End = time.Now()
+				allSamples[ind].Lat = allSamples[ind].End.Sub(allSamples[ind].Start).Nanoseconds() / int64(time.Millisecond)
 			}
 			wg.Done()
 		}(loadGen, i)
 	}
 	wg.Wait()
 
-	// report statistics
-	// per X second breakdown and total
-	finalTime := time.Now()
-	endTime := startTime.Add(10 * time.Second)
-	if endTime.After(finalTime) {
-		endTime = finalTime
-	}
-	startPos := make([]int, *nThreads)
-	for {
-		var latencies []int
-		for i := 0; i < (*nThreads); i++ {
-			var j int
-			for j = startPos[i]; j < (*nOps); j++ {
-				if endTime.Before(sampleStats[i*(*nOps)+j].end) {
-					break
-				}
-				latencies = append(latencies, sampleStats[i*(*nOps)+j].lat)
-			}
-			startPos[i] = j
-		}
-		if len(latencies) == 0 {
-			break
-		}
-		throughput, min, max, avg := calculateStats(endTime.Sub(startTime), latencies)
-		log.Printf("endTime %v: throughput %.2f latency (min, avg, max) %d %.2f %d\n", endTime, throughput, min, avg, max)
-		startTime = endTime
-		endTime = endTime.Add(10 * time.Second)
-		if endTime.After(finalTime) {
-			endTime = finalTime
-		}
-	}
+	// report overall statistics
+	throughput, samples, startTime := calculateThroughput()
+	fmt.Printf("# throughput %.2f ops/sec %d requests\n", throughput, len(samples))
 
+	// sort.Sort(ByStart(samples))
+	sort.Sort(ByLat(samples))
+	for _, v := range samples {
+		fmt.Printf("%d %d\n", v.Start.Sub(startTime).Nanoseconds()/int64(time.Millisecond), v.Lat)
+	}
 }
 
 type PutGenerator struct {
@@ -219,29 +218,29 @@ type RPCConnectHandler struct {
 
 func (c *RPCConnectHandler) OnConnect(ctx context.Context,
 	conn *rpc.Connection, client rpc.GenericClient, _ *rpc.Server) error {
-	fmt.Printf("OnConnect\n")
+	log.Printf("OnConnect\n")
 	return nil
 }
 
 func (c *RPCConnectHandler) OnDoCommandError(err error, nextTime time.Duration) {
-	fmt.Printf("OnDoCommandError\n")
+	log.Printf("OnDoCommandError\n")
 }
 
 func (c *RPCConnectHandler) OnDisconnected(ctx context.Context, status rpc.DisconnectStatus) {
-	fmt.Printf("OnDisconnected\n")
+	log.Printf("OnDisconnected\n")
 }
 
 func (c *RPCConnectHandler) OnConnectError(err error, dur time.Duration) {
-	fmt.Printf("OnConnectError\n")
+	log.Printf("OnConnectError\n")
 }
 
 func (c *RPCConnectHandler) ShouldRetry(name string, err error) bool {
-	fmt.Printf("ShouldRetry\n")
+	log.Printf("ShouldRetry\n")
 	return true
 }
 
 func (c *RPCConnectHandler) ShouldRetryOnConnect(err error) bool {
-	fmt.Printf("ShouldRetryOnConnect\n")
+	log.Printf("ShouldRetryOnConnect\n")
 	return true
 }
 
@@ -333,7 +332,7 @@ func TestServerNullPutPerformance(t *testing.T) {
 func TestMain(m *testing.M) {
 	flag.Parse()
 
-	sampleStats = make([]sample, *nThreads*(*nOps))
+	allSamples = make([]Sample, *nThreads*(*nOps))
 
 	//create all nBuckets
 	stores = make([]CloudBlobStore, *nBuckets)
