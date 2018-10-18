@@ -47,7 +47,7 @@ type CloudBlobStore interface {
 	GetBucketName() string
 	Get(string) ([]byte, error)
 	Put(string, []byte) error
-	ReadAllKeys(int) ([]string, error)
+	ReadAllKeys(int, int) ([]string, error)
 }
 
 type LoadGenerator interface {
@@ -165,8 +165,9 @@ func measureS3(t *testing.T, loadGen LoadGenerator) {
 
 	// sort.Sort(ByStart(samples))
 	sort.Sort(ByLat(samples))
-	for _, v := range samples {
-		fmt.Printf("%d %d\n", v.Start.Sub(startTime).Nanoseconds()/int64(time.Millisecond), v.Lat)
+	for i, v := range samples {
+		fmt.Printf("%d %d %f\n", v.Start.Sub(startTime).Nanoseconds()/int64(time.Millisecond),
+			v.Lat, float32((i+1))/float32(len(samples)))
 	}
 }
 
@@ -201,11 +202,12 @@ func (p *GetGenerator) DoWork(generator *rand.Rand) error {
 }
 
 func TestS3GetPerformance(t *testing.T) {
-	keys, err := stores[0].ReadAllKeys(*nOps * (*nThreads))
+	keys, err := stores[0].ReadAllKeys(*nOps*(*nThreads), *bSize)
 	if err != nil || len(keys) == 0 {
 		t.Fatal("bucket(%s) err %v tuples in bucket %d\n",
 			stores[0].GetBucketName(), err, len(keys))
 	}
+	log.Printf("Retrieved %d keys\n", len(keys))
 	loadGen := GetGenerator{
 		keys:  keys,
 		store: stores[0],
@@ -249,15 +251,20 @@ func (c *RPCConnectHandler) HandlerName() string {
 }
 
 type ServerGetGenerator struct {
+	keys   []string
 	client BlockProtocolClient
 }
 
 func (g *ServerGetGenerator) DoWork(generator *rand.Rand) error {
+	key := g.keys[rand.Intn(len(g.keys))]
 	arg := GetArg{
-		Key:  "hello",
+		Key:  key,
 		Size: *bSize,
 	}
-	_, err := g.client.Get(context.Background(), arg)
+	res, err := g.client.Get(context.Background(), arg)
+	if len(res.Value) != *bSize {
+		log.Fatalf("res Value=%d *bsize=%d\n", len(res.Value), *bSize)
+	}
 	return err
 }
 
@@ -293,8 +300,20 @@ func makeClient() BlockProtocolClient {
 
 func TestServerGetPerformance(t *testing.T) {
 	client := makeClient()
+	store, err := NewOfficialS3Store("us-east-1", *bucketPrefix, *accelerate)
+	if err != nil {
+		log.Fatal(err)
+	}
+	keys, err := store.ReadAllKeys(*nOps*(*nThreads), *bSize)
+	if err != nil || len(keys) == 0 {
+		t.Fatal("bucket(%s) err %v tuples in bucket %d\n",
+			stores[0].GetBucketName(), err, len(keys))
+	}
+	log.Printf("Retrieved %d keys\n", len(keys))
+
 	g := &ServerGetGenerator{
 		client: client,
+		keys:   keys,
 	}
 	measureS3(t, g)
 }

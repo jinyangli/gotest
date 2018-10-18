@@ -114,9 +114,12 @@ func (h *GoamzS3Store) Put(key string, buf []byte) error {
 	return nil
 }
 
-func (h *GoamzS3Store) ReadAllKeys(max int) (allkeys []string, err error) {
+func (h *GoamzS3Store) ReadAllKeys(max int, sizeConstraint int) (allkeys []string, err error) {
 	var keys []string
 	var next string
+	if sizeConstraint > 0 {
+		log.Fatal("GoamzStore does not enforce size constraint %d\n", sizeConstraint)
+	}
 	for {
 		keys, next, err = h.List("", next)
 		if err != nil {

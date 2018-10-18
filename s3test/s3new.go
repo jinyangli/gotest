@@ -69,11 +69,13 @@ func (h *OfficialS3Store) Get(key string) (buf []byte, err error) {
 	return buf, err
 }
 
-func (h *OfficialS3Store) ReadAllKeys(max int) (allkeys []string, err error) {
+func (h *OfficialS3Store) ReadAllKeys(max int, sizeConstraint int) (allkeys []string, err error) {
 	err = h.svc.ListObjectsPages(&s3.ListObjectsInput{Bucket: &h.bucketName},
 		func(p *s3.ListObjectsOutput, last bool) (shouldContinue bool) {
 			for _, obj := range p.Contents {
-				allkeys = append(allkeys, *obj.Key)
+				if sizeConstraint < 0 || *obj.Size == int64(sizeConstraint) {
+					allkeys = append(allkeys, *obj.Key)
+				}
 			}
 			if len(allkeys) < max {
 				return true
