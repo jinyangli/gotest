@@ -80,19 +80,17 @@ func (s ByLat) Less(i, j int) bool { return s[i].Lat < s[j].Lat }
 var allSamples []Sample
 var randBlock []byte
 
-func init() {
+func initRandomBlock() {
 	small := make([]byte, 16)
 	generator := rand.New(rand.NewSource(time.Now().UnixNano()))
 	r, err := generator.Read(small)
 	if r != 16 || err != nil {
 		log.Fatalf("returned %d random bytes, expected %d err=%v\n", r, 16, err)
 	}
-	n := *bSize
-	buf := make([]byte, n)
-	for i := 0; i < n; i++ {
+	buf := make([]byte, *bSize)
+	for i := 0; i < *bSize; i++ {
 		buf[i] = small[i%16]
 	}
-
 	randBlock = buf
 }
 
@@ -100,10 +98,22 @@ func genRandBytes(n int, generator *rand.Rand) []byte {
 	return randBlock
 }
 
-func genRandString(n int, generator *rand.Rand) string {
+func genRandKey(n int, generator *rand.Rand) string {
+	if n < 4 {
+		log.Fatal("too small")
+	}
 	buf := make([]rune, n)
-	for i := range buf {
+	i := 0
+	for i < n {
 		buf[i] = letterRunes[generator.Intn(len(letterRunes))]
+		i += 1
+		if i == 2 {
+			buf[i] = '/'
+			i += 1
+		} else if i == 5 {
+			buf[i] = '/'
+			i += 1
+		}
 	}
 	return string(buf)
 }
@@ -177,7 +187,7 @@ type PutGenerator struct {
 
 func (p *PutGenerator) DoWork(generator *rand.Rand) error {
 	// do a random put operation
-	key := genRandString(40, generator)
+	key := genRandKey(40, generator)
 	val := genRandBytes(*bSize, generator)
 	return p.store.Put(key, val)
 }
@@ -274,7 +284,7 @@ type ServerPutGenerator struct {
 
 func (g *ServerPutGenerator) DoWork(generator *rand.Rand) error {
 	arg := PutArg{
-		Key:   genRandString(40, generator),
+		Key:   genRandKey(40, generator),
 		Value: genRandBytes(*bSize, generator),
 	}
 	_, err := g.client.Put(context.Background(), arg)
@@ -332,7 +342,7 @@ type ServerNullPutGenerator struct {
 
 func (g *ServerNullPutGenerator) DoWork(generator *rand.Rand) error {
 	arg := PutArg{
-		Key:   genRandString(40, generator),
+		Key:   genRandKey(40, generator),
 		Value: genRandBytes(*bSize, generator),
 		NoS3:  true,
 	}
@@ -350,6 +360,7 @@ func TestServerNullPutPerformance(t *testing.T) {
 
 func TestMain(m *testing.M) {
 	flag.Parse()
+	initRandomBlock()
 
 	allSamples = make([]Sample, *nThreads*(*nOps))
 
