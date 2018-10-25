@@ -14,7 +14,8 @@ import (
 )
 
 var (
-	verbose = flag.Bool("v", false, "verbose printing")
+	verbose      = flag.Bool("v", false, "verbose printing")
+	bucketPrefix = flag.String("bucketPrefix", "bservertest", "Prefix of the testing buckets")
 )
 
 type MyServer struct {
@@ -24,7 +25,7 @@ type MyServer struct {
 }
 
 func NewMyServer() (*MyServer, error) {
-	s3store, err := s3test.NewOfficialS3Store("us-east-1", "bservertest", true)
+	s3store, err := s3test.NewOfficialS3Store("us-east-1", *bucketPrefix, true)
 	if err != nil {
 		return nil, err
 	}
