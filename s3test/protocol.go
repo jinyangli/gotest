@@ -48,7 +48,7 @@ func BlockProtocol(i BlockInterface) rpc.Protocol {
 					ret, err = i.Get(ctx, (*typedArgs)[0])
 					return
 				},
-				MethodType: rpc.MethodCall,
+				//MethodType: rpc.MethodCall,
 			},
 			"put": {
 				MakeArg: func() interface{} {
@@ -63,7 +63,7 @@ func BlockProtocol(i BlockInterface) rpc.Protocol {
 					ret, err = i.Put(ctx, (*typedArgs)[0])
 					return
 				},
-				MethodType: rpc.MethodCall,
+				//MethodType: rpc.MethodCall,
 			},
 		},
 	}

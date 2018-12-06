@@ -46,9 +46,12 @@ func (f *MyServer) Get(ctx context.Context, arg s3test.GetArg) (res s3test.GetRe
 	if arg.Size > 0 && len(f.buf) < arg.Size {
 		f.buf = make([]byte, arg.Size)
 		f.randSource.Read(f.buf)
-	} else if arg.Size > 0 {
-		res.Value = f.buf[0:arg.Size]
 	}
+	if arg.Size > 0 {
+		res.Value = f.buf[0:arg.Size]
+		return res, nil
+	}
+
 	buf, err := f.s3store.Get(arg.Key)
 	if err != nil {
 		log.Fatal(err)

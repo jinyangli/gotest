@@ -20,11 +20,12 @@ import (
 
 var (
 	nOps     = flag.Int("nOps", 100, "Number of test operations issued per client thread")
+	barrier  = flag.Bool("barrier", false, "Do a barrier after sending nThreads ops")
 	nBuckets = flag.Int("nBuckets", 1, "Number of buckets used")
 	//	bucketPrefix   = flag.String("bucketPrefix", "pperf-test-", "Prefix of the testing buckets")
 	bucketPrefix   = flag.String("bucketPrefix", "bservertest", "Prefix of the testing buckets")
 	nThreads       = flag.Int("nThreads", 10, "Number of client threads to use")
-	bSize          = flag.Int("bSize", 500000, "Default block size")
+	bDist          = flag.Int("bdist", 80, "fraction of large block")
 	useOfficialSDK = flag.Bool("sdk", true, "Use Amazon's official SDK")
 	accelerate     = flag.Bool("acc", true, "Use Amazon's accelerate option")
 	cpuprofile     = flag.String("cpuprofile", "", "write cpu profile to file")
@@ -51,7 +52,7 @@ type CloudBlobStore interface {
 }
 
 type LoadGenerator interface {
-	DoWork(generator *rand.Rand) error
+	DoWork(generator *rand.Rand) (sz int, err error)
 }
 
 type S3TestOp func(store CloudBlobStore, generator *rand.Rand) error
@@ -62,14 +63,15 @@ var allKeys [][]string
 type Sample struct {
 	Start time.Time
 	End   time.Time
+	Size  int
 	Lat   int64
 }
 
-type ByStart []Sample
+type ByEnd []Sample
 
-func (s ByStart) Len() int           { return len(s) }
-func (s ByStart) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
-func (s ByStart) Less(i, j int) bool { return s[i].Start.Before(s[j].Start) }
+func (s ByEnd) Len() int           { return len(s) }
+func (s ByEnd) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
+func (s ByEnd) Less(i, j int) bool { return s[i].End.Before(s[j].End) }
 
 type ByLat []Sample
 
@@ -80,6 +82,10 @@ func (s ByLat) Less(i, j int) bool { return s[i].Lat < s[j].Lat }
 var allSamples []Sample
 var randBlock []byte
 
+var maxBlockSize int = 500000
+var minBlockSize int = 300
+
+/*
 func initRandomBlock() {
 	small := make([]byte, 16)
 	generator := rand.New(rand.NewSource(time.Now().UnixNano()))
@@ -87,15 +93,29 @@ func initRandomBlock() {
 	if r != 16 || err != nil {
 		log.Fatalf("returned %d random bytes, expected %d err=%v\n", r, 16, err)
 	}
-	buf := make([]byte, *bSize)
+	buf := make([]byte, maxBlockSize)
 	for i := 0; i < *bSize; i++ {
 		buf[i] = small[i%16]
 	}
 	randBlock = buf
 }
+*/
 
-func genRandBytes(n int, generator *rand.Rand) []byte {
-	return randBlock
+func getSizeFromDistribution(generator *rand.Rand) int {
+	if generator.Intn(100) < *bDist {
+		return maxBlockSize
+	}
+	return minBlockSize
+}
+
+func genRandBlock(generator *rand.Rand) (block []byte, err error) {
+	sz := getSizeFromDistribution(generator)
+	block = make([]byte, sz)
+	r, err := generator.Read(block)
+	if r != sz || err != nil {
+		return nil, err
+	}
+	return block, nil
 }
 
 func genRandKey(n int, generator *rand.Rand) string {
@@ -118,66 +138,128 @@ func genRandKey(n int, generator *rand.Rand) string {
 	return string(buf)
 }
 
-func calculateThroughput() (throughput float32, samples []Sample, startTime time.Time) {
+func calculateThroughput() (throughput float32, startTime time.Time, count int, dur time.Duration) {
+	totalSize := 0
 	startTime = time.Now()
-	for i := 0; i < *nThreads; i++ {
-		ind := i*(*nOps) + 0
-		if allSamples[ind].Start.Before(startTime) {
-			startTime = allSamples[ind].Start
+	for i := 0; i < *nOps; i++ {
+		totalSize += allSamples[i].Size
+		if allSamples[i].Start.Before(startTime) {
+			startTime = allSamples[i].Start
 		}
 	}
-	endTime := time.Now()
-	for i := 0; i < *nThreads; i++ {
-		ind := i*(*nOps) + (*nOps - 1)
-		if allSamples[ind].End.Before(endTime) {
-			endTime = allSamples[ind].End
-		}
+	sort.Sort(ByEnd(allSamples))
+	cutoff := 10
+	if len(allSamples) < cutoff {
+		log.Fatal("Not enough requests")
 	}
-	for i := 0; i < *nThreads; i++ {
-		for j := 0; j < *nOps; j++ {
-			ind := i*(*nOps) + j
-			if allSamples[ind].End.Before(endTime) {
-				samples = append(samples, allSamples[ind])
-			} else {
-				break
-			}
-		}
+	endTime := allSamples[len(allSamples)-cutoff].End
+	for i := len(allSamples) - 1; i >= len(allSamples)-cutoff; i-- {
+		totalSize -= allSamples[i].Size
 	}
-	throughput = float32(len(samples)) / float32(endTime.Sub(startTime).Seconds())
-	return throughput, samples, startTime
+	fmt.Printf("full duration %d total bytes %d\n", allSamples[len(allSamples)-1].End.Sub(startTime)/time.Millisecond,
+		totalSize)
+	//throughput = 1000.0 * float32(len(allSamples)) / float32(endTime.Sub(startTime)/time.Millisecond)
+	duration := endTime.Sub(startTime)
+	throughput = float32(totalSize) / (1000.0 * float32(duration/time.Millisecond))
+	return throughput, startTime, count, duration
 }
 
-func measureS3(t *testing.T, loadGen LoadGenerator) {
+func measure(t *testing.T, loadGen LoadGenerator) {
 	var wg sync.WaitGroup
+
+	inputChan := make(chan int, *nOps)
+	outputChan := make(chan Sample, *nOps)
+	errChan := make(chan error)
 
 	for i := 0; i < *nThreads; i++ {
 		wg.Add(1)
-		go func(loadGen LoadGenerator, whichTh int) {
+		go func() {
 			generator := rand.New(rand.NewSource(time.Now().UnixNano()))
-			for j := 0; j < *nOps; j++ {
-				ind := whichTh*(*nOps) + j
-				allSamples[ind].Start = time.Now()
-				err := loadGen.DoWork(generator)
+			for range inputChan {
+				var s Sample
+				s.Start = time.Now()
+				sz, err := loadGen.DoWork(generator)
 				if err != nil {
-					t.Logf("thread %d request %d err %v\n", whichTh, j, err)
+					errChan <- err
+					break
 				}
-				allSamples[ind].End = time.Now()
-				allSamples[ind].Lat = allSamples[ind].End.Sub(allSamples[ind].Start).Nanoseconds() / int64(time.Millisecond)
+				s.Size = sz
+				s.End = time.Now()
+				s.Lat = s.End.Sub(s.Start).Nanoseconds() / int64(time.Millisecond)
+				outputChan <- s
 			}
 			wg.Done()
-		}(loadGen, i)
+		}()
 	}
+
+	for i := 0; i < *nOps; i++ {
+		inputChan <- i
+	}
+	close(inputChan)
 	wg.Wait()
 
+	i := 0
+	for i < *nOps {
+		select {
+		case err := <-errChan:
+			log.Fatal("request error %v\n", err)
+		case s := <-outputChan:
+			allSamples[i] = s
+			i++
+		}
+	}
 	// report overall statistics
-	throughput, samples, startTime := calculateThroughput()
-	fmt.Printf("# throughput %.2f ops/sec %d requests\n", throughput, len(samples))
+	throughput, startTime, count, dur := calculateThroughput()
+	fmt.Printf("# throughput %.2f ops/sec %d requests duration %d\n", throughput, count, dur/time.Millisecond)
 
-	// sort.Sort(ByStart(samples))
-	sort.Sort(ByLat(samples))
-	for i, v := range samples {
+	sort.Sort(ByLat(allSamples))
+	for i, v := range allSamples {
 		fmt.Printf("%d %d %f\n", v.Start.Sub(startTime).Nanoseconds()/int64(time.Millisecond),
-			v.Lat, float32((i+1))/float32(len(samples)))
+			v.Lat, float32((i+1))/float32(len(allSamples)))
+	}
+}
+
+func measureWithBarrier(t *testing.T, loadGen LoadGenerator) {
+
+	if (*nOps % *nThreads) != 0 {
+		log.Fatal("total ops %d must be a multiple of total threads %d\n", *nOps, *nThreads)
+	}
+	for k := 0; k < *nOps; k += *nThreads {
+		var wg sync.WaitGroup
+
+		errChan := make(chan error, *nThreads)
+		for i := 0; i < *nThreads; i++ {
+			wg.Add(1)
+			go func(tid int, indStart int) {
+				generator := rand.New(rand.NewSource(time.Now().UnixNano()))
+				var s Sample
+				s.Start = time.Now()
+				sz, err := loadGen.DoWork(generator)
+				if err != nil {
+					errChan <- err
+				}
+				s.Size = sz
+				s.End = time.Now()
+				s.Lat = s.End.Sub(s.Start).Nanoseconds() / int64(time.Millisecond)
+				allSamples[indStart+tid] = s
+				wg.Done()
+			}(i, k)
+		}
+		wg.Wait()
+		close(errChan)
+
+		for err := range errChan {
+			log.Fatal("request error %v\n", err)
+		}
+	}
+	// report overall statistics
+	throughput, startTime, count, dur := calculateThroughput()
+	fmt.Printf("# throughput %.2f ops/sec %d requests duration %d\n", throughput, count, dur/time.Millisecond)
+
+	sort.Sort(ByLat(allSamples))
+	for i, v := range allSamples {
+		fmt.Printf("%d %d %f\n", v.Start.Sub(startTime).Nanoseconds()/int64(time.Millisecond),
+			v.Lat, float32((i+1))/float32(len(allSamples)))
 	}
 }
 
@@ -185,18 +267,26 @@ type PutGenerator struct {
 	store CloudBlobStore
 }
 
-func (p *PutGenerator) DoWork(generator *rand.Rand) error {
+func (p *PutGenerator) DoWork(generator *rand.Rand) (sz int, err error) {
 	// do a random put operation
 	key := genRandKey(40, generator)
-	val := genRandBytes(*bSize, generator)
-	return p.store.Put(key, val)
+	val, err := genRandBlock(generator)
+	if err != nil {
+		return 0, err
+	}
+	err = p.store.Put(key, val)
+	return len(val), err
 }
 
 func TestS3PutPerformance(t *testing.T) {
 	p := &PutGenerator{
 		store: stores[0],
 	}
-	measureS3(t, p)
+	if *barrier {
+		measureWithBarrier(t, p)
+	} else {
+		measure(t, p)
+	}
 }
 
 type GetGenerator struct {
@@ -204,25 +294,30 @@ type GetGenerator struct {
 	store CloudBlobStore
 }
 
-func (p *GetGenerator) DoWork(generator *rand.Rand) error {
+func (p *GetGenerator) DoWork(generator *rand.Rand) (sz int, err error) {
 	// do a random put operation
 	key := p.keys[rand.Intn(len(p.keys))]
-	_, err := p.store.Get(key)
-	return err
+	b, err := p.store.Get(key)
+	return len(b), err
 }
 
 func TestS3GetPerformance(t *testing.T) {
-	keys, err := stores[0].ReadAllKeys(*nOps*(*nThreads), *bSize)
+	keys, err := stores[0].ReadAllKeys(*nOps*(*nThreads), maxBlockSize)
 	if err != nil || len(keys) == 0 {
 		t.Fatal("bucket(%s) err %v tuples in bucket %d\n",
 			stores[0].GetBucketName(), err, len(keys))
 	}
 	log.Printf("Retrieved %d keys\n", len(keys))
-	loadGen := GetGenerator{
+	g := &GetGenerator{
 		keys:  keys,
 		store: stores[0],
 	}
-	measureS3(t, &loadGen)
+	if *barrier {
+		measureWithBarrier(t, g)
+	} else {
+		measure(t, g)
+	}
+
 }
 
 type RPCConnectHandler struct {
@@ -265,30 +360,31 @@ type ServerGetGenerator struct {
 	client BlockProtocolClient
 }
 
-func (g *ServerGetGenerator) DoWork(generator *rand.Rand) error {
+func (g *ServerGetGenerator) DoWork(generator *rand.Rand) (sz int, err error) {
 	key := g.keys[rand.Intn(len(g.keys))]
 	arg := GetArg{
 		Key:  key,
-		Size: *bSize,
+		Size: 0,
 	}
 	res, err := g.client.Get(context.Background(), arg)
-	if len(res.Value) != *bSize {
-		log.Fatalf("res Value=%d *bsize=%d\n", len(res.Value), *bSize)
-	}
-	return err
+	return len(res.Value), err
 }
 
 type ServerPutGenerator struct {
 	client BlockProtocolClient
 }
 
-func (g *ServerPutGenerator) DoWork(generator *rand.Rand) error {
+func (g *ServerPutGenerator) DoWork(generator *rand.Rand) (sz int, err error) {
+	block, err := genRandBlock(generator)
+	if err != nil {
+		return 0, err
+	}
 	arg := PutArg{
 		Key:   genRandKey(40, generator),
-		Value: genRandBytes(*bSize, generator),
+		Value: block,
 	}
-	_, err := g.client.Put(context.Background(), arg)
-	return err
+	_, err = g.client.Put(context.Background(), arg)
+	return len(block), err
 }
 
 func makeClient() BlockProtocolClient {
@@ -314,7 +410,7 @@ func TestServerGetPerformance(t *testing.T) {
 	if err != nil {
 		log.Fatal(err)
 	}
-	keys, err := store.ReadAllKeys(*nOps*(*nThreads), *bSize)
+	keys, err := store.ReadAllKeys(*nOps*(*nThreads), maxBlockSize)
 	if err != nil || len(keys) == 0 {
 		t.Fatal("bucket(%s) err %v tuples in bucket %d\n",
 			stores[0].GetBucketName(), err, len(keys))
@@ -325,7 +421,11 @@ func TestServerGetPerformance(t *testing.T) {
 		client: client,
 		keys:   keys,
 	}
-	measureS3(t, g)
+	if *barrier {
+		measureWithBarrier(t, g)
+	} else {
+		measure(t, g)
+	}
 }
 
 func TestServerPutPerformance(t *testing.T) {
@@ -333,21 +433,29 @@ func TestServerPutPerformance(t *testing.T) {
 	g := &ServerPutGenerator{
 		client: client,
 	}
-	measureS3(t, g)
+	if *barrier {
+		measureWithBarrier(t, g)
+	} else {
+		measure(t, g)
+	}
 }
 
 type ServerNullPutGenerator struct {
 	client BlockProtocolClient
 }
 
-func (g *ServerNullPutGenerator) DoWork(generator *rand.Rand) error {
+func (g *ServerNullPutGenerator) DoWork(generator *rand.Rand) (sz int, err error) {
+	val, err := genRandBlock(generator)
+	if err != nil {
+		return 0, err
+	}
 	arg := PutArg{
 		Key:   genRandKey(40, generator),
-		Value: genRandBytes(*bSize, generator),
+		Value: val,
 		NoS3:  true,
 	}
-	_, err := g.client.Put(context.Background(), arg)
-	return err
+	_, err = g.client.Put(context.Background(), arg)
+	return len(val), err
 }
 
 func TestServerNullPutPerformance(t *testing.T) {
@@ -355,14 +463,18 @@ func TestServerNullPutPerformance(t *testing.T) {
 	g := &ServerNullPutGenerator{
 		client: client,
 	}
-	measureS3(t, g)
+	if *barrier {
+		measureWithBarrier(t, g)
+	} else {
+		measure(t, g)
+	}
 }
 
 func TestMain(m *testing.M) {
 	flag.Parse()
-	initRandomBlock()
+	//initRandomBlock()
 
-	allSamples = make([]Sample, *nThreads*(*nOps))
+	allSamples = make([]Sample, *nOps)
 
 	//create all nBuckets
 	stores = make([]CloudBlobStore, *nBuckets)
